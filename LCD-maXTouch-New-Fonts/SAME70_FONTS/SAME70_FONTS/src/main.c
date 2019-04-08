@@ -25,21 +25,32 @@
 #define LED_IDX       8u
 #define LED_IDX_MASK  (1u << LED_IDX)
 
-//botão 1 do oled
+//botão 1 do oled para simulação do sensor magnetico
 #define BUT1_PIO           PIOD
 #define BUT1_PIO_ID        ID_PIOD
 #define BUT1_PIO_IDX       28u
 #define BUT1_PIO_IDX_MASK  (1u << BUT1_PIO_IDX)
+
+//botao 2 do oled para reinicio
+#define BUT2_PIO      PIOC
+#define BUT2_PIO_ID   ID_PIOC
+#define BUT2_IDX  31
+#define BUT2_PIO_IDX_MASK (1 << BUT2_IDX)
+
 
 
 float bike_radius = 0.325;
 float PI = 3.141;
 
 volatile Bool f_rtt_alarme = false;
+volatile Bool pause_flag = false;
 
-int velocidade;
 
-int distancia;
+int velocidade =0;
+
+int count_velocidade_att = 0;
+
+int distancia = 0;
 int pulsos = 0;
 int delta_pulsos = 0;
 char string_distancia[32];
@@ -52,7 +63,6 @@ int horas = 0;
 char string_segundos[32];
 char string_minutos[32];
 char string_horas[32];
-
 
 
 /************************************************************************/
@@ -76,6 +86,12 @@ void but_callback(void)
 	delta_pulsos +=1;
 }
 
+void pause_callback(void)
+{
+	pause_flag = !pause_flag;
+	
+}
+
 void font_draw_text(tFont *font, const char *text, int x, int y, int spacing) {
 	char *p = text;
 	while(*p != NULL) {
@@ -90,43 +106,85 @@ void font_draw_text(tFont *font, const char *text, int x, int y, int spacing) {
 	}
 }
 
+void print_time(){
+	sprintf(string_segundos,"%d",segundos);
+	sprintf(string_minutos,"%d",minutos);
+	sprintf(string_horas,"%d",horas);
+				
+				
+				
+	font_draw_text(&arial_72, string_horas,40, 340, 2);
+	font_draw_text(&arial_72, string_minutos,130, 340, 2);
+	font_draw_text(&arial_72, string_segundos,220, 340, 2);
+}
+
 void increment_time(){
 	segundos +=1;
 	if(segundos == 60){
 		segundos = 0;
+		ili9488_draw_filled_rectangle(220, 340, ILI9488_LCD_WIDTH-1, ILI9488_LCD_HEIGHT-1);
+		
 		minutos +=1;
 		
 		if(minutos == 60){
 			minutos = 0;
+			ili9488_draw_filled_rectangle(220, 340, ILI9488_LCD_WIDTH-1, ILI9488_LCD_HEIGHT-1);
+			
 			horas+=1;
 		}
 	}
 }
 
+void print_dist_vel(){
+	sprintf(string_velocidade,"%d",velocidade);
+	sprintf(string_distancia,"%d",distancia);
+	
+	
+	ili9488_draw_filled_rectangle(50, 200,  ILI9488_LCD_WIDTH-1, 270);
+	font_draw_text(&arial_72, string_velocidade,50, 190, 2);
+	font_draw_text(&arial_72, string_distancia,50, 60, 2);
+}
+
 void RTT_Handler(void)
 {
+
 	uint32_t ul_status;
+	
+		/* Get RTT status */
+		ul_status = rtt_get_status(RTT);
+	
+		/* IRQ due to Time has changed */
+		if ((ul_status & RTT_SR_RTTINC) == RTT_SR_RTTINC) {  }
+	
+		/* IRQ due to Alarm */
+		if ((ul_status & RTT_SR_ALMS) == RTT_SR_ALMS) {
+			pin_toggle(LED_PIO, LED_IDX_MASK);    // BLINK Led
+			f_rtt_alarme = true;                  // flag RTT alarme
+			
+			
+			
+			//contador para atualizar a velocidade e distancia a cada 4 segundos
+			if(count_velocidade_att == 0){
+				print_dist_vel();
+				
+			}
+			if(!pause_flag){
+				count_velocidade_att +=1;
+			
+				if(count_velocidade_att ==4){
+					count_velocidade_att = 0;
+				}		
+			
+			
+			
+				increment_time();
+			}
+			rtc_set_date_alarm(RTC, 1, MOUNT, 1, DAY);
+			rtc_set_time_alarm(RTC, 1, HOUR, 1, MINUTE, 1, SECOND+1);
+			
+			print_time();
+		}
 
-	/* Get RTT status */
-	ul_status = rtt_get_status(RTT);
-
-	/* IRQ due to Time has changed */
-	if ((ul_status & RTT_SR_RTTINC) == RTT_SR_RTTINC) {  }
-
-	/* IRQ due to Alarm */
-	if ((ul_status & RTT_SR_ALMS) == RTT_SR_ALMS) {
-		pin_toggle(LED_PIO, LED_IDX_MASK);    // BLINK Led
-		f_rtt_alarme = true;                  // flag RTT alarme
-		
-		sprintf(string_distancia,"%d",distancia);
-		sprintf(string_velocidade,"%d",velocidade);
-		
-		//font_draw_text(&arial_72, "    ",50, 60, 2);
-		//font_draw_text(&arial_72, "    ",50, 190, 2);
-		
-		font_draw_text(&arial_72, string_distancia,50, 60, 2);
-		font_draw_text(&arial_72, string_velocidade,50, 190, 2);
-	}
 }
 
 
@@ -139,23 +197,37 @@ void RTT_Handler(void)
 
 
 void io_init(void){
-	//botao oled
+	//botao1 oled
 	pmc_enable_periph_clk(BUT1_PIO_ID);
+	
 	pio_set_debounce_filter(BUT1_PIO,BUT1_PIO_IDX_MASK,20);
-	
 	pio_configure(BUT1_PIO, PIO_INPUT, BUT1_PIO_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE);
-	
-	 pio_handler_set(BUT1_PIO,
-	 BUT1_PIO_ID,
-	 BUT1_PIO_IDX_MASK,
-	 PIO_IT_FALL_EDGE,
-	 but_callback);
-
 	pio_enable_interrupt(BUT1_PIO, BUT1_PIO_IDX_MASK);
 	
 	NVIC_EnableIRQ(BUT1_PIO_ID);
 	NVIC_SetPriority(BUT1_PIO_ID, 4); // Prioridade 4
 	
+	pio_handler_set(BUT1_PIO,
+	BUT1_PIO_ID,
+	BUT1_PIO_IDX_MASK,
+	PIO_IT_FALL_EDGE,
+	but_callback);
+	
+	//botao2 oled
+	pmc_enable_periph_clk(BUT2_PIO_ID);
+		
+	pio_set_debounce_filter(BUT2_PIO,BUT2_PIO_IDX_MASK,20);
+	pio_configure(BUT2_PIO, PIO_INPUT, BUT2_PIO_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE);
+	pio_enable_interrupt(BUT2_PIO, BUT2_PIO_IDX_MASK);
+		
+	NVIC_EnableIRQ(BUT2_PIO_ID);
+	NVIC_SetPriority(BUT2_PIO_ID, 4); // Prioridade 4
+		
+	pio_handler_set(BUT2_PIO,
+	BUT2_PIO_ID,
+	BUT2_PIO_IDX_MASK,
+	PIO_IT_FALL_EDGE,
+	pause_callback);
 	
 	
 	
@@ -207,9 +279,6 @@ void configure_lcd(void){
 
 void pin_toggle(Pio *pio, uint32_t mask){
 	
-	
-	
-	
 	if(pio_get_output_data_status(pio, mask)){
 		pio_clear(pio, mask);	
 		}else{
@@ -232,12 +301,9 @@ int main(void) {
 	
 	
 	font_draw_text(&calibri_36, "Distancia (m)", 20, 20, 1);
-	font_draw_text(&calibri_36, "Velocidade (m/s)", 20, 150, 1);
-	font_draw_text(&calibri_36, "Tempo total", 20, 300, 1);
+	font_draw_text(&calibri_36, "Velocidade (km/h)", 20, 150, 1);
+	font_draw_text(&calibri_36, "Tempo ttl (h m s)", 20, 300, 1);
 	
-	
-	font_draw_text(&calibri_36, ":", 110, 355, 1);
-	font_draw_text(&calibri_36, ":", 220, 355, 1);
 	
 	
 	
@@ -283,10 +349,19 @@ int main(void) {
 		  // reinicia RTT para gerar um novo IRQ
 		  RTT_init(pllPreScale, irqRTTvalue);
 		  
-		  distancia = 2*PI*bike_radius*pulsos;
+
+			  distancia = 2*PI*bike_radius*pulsos;
 		  
-		  velocidade = 2*PI*delta_pulsos/4;
-		  delta_pulsos = 0;
+		  
+		  
+			  if(count_velocidade_att == 0){
+				velocidade = (2*PI*delta_pulsos/4) * bike_radius;
+			
+				//para km/h
+				velocidade = velocidade * 3.6;
+				delta_pulsos = 0;
+			  }
+		  
 		  
 		  
       
