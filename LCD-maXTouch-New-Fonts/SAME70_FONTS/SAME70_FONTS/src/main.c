@@ -37,8 +37,6 @@
 #define BUT2_IDX  31
 #define BUT2_PIO_IDX_MASK (1 << BUT2_IDX)
 
-
-
 float bike_radius = 0.325;
 float PI = 3.141;
 
@@ -47,14 +45,18 @@ volatile Bool pause_flag = false;
 
 
 int velocidade =0;
-
+int velocidade_maxima = 0 ;
 int count_velocidade_att = 0;
+
+int idle_count = 0;
+int idle_lastPulse = 0;
 
 int distancia = 0;
 int pulsos = 0;
 int delta_pulsos = 0;
 char string_distancia[32];
 char string_velocidade[32];
+char string_velocidade_maxima[32];
 
 int segundos = 0;
 int	minutos = 0;
@@ -84,6 +86,8 @@ void but_callback(void)
 {
 	pulsos +=1;
 	delta_pulsos +=1;
+	
+	idle_lastPulse = pulsos;
 }
 
 void pause_callback(void)
@@ -137,17 +141,34 @@ void increment_time(){
 
 void print_dist_vel(){
 	sprintf(string_velocidade,"%d",velocidade);
+	sprintf(string_velocidade_maxima,"%d",velocidade_maxima);
 	sprintf(string_distancia,"%d",distancia);
+	
 	
 	
 	ili9488_draw_filled_rectangle(50, 200,  ILI9488_LCD_WIDTH-1, 270);
 	font_draw_text(&arial_72, string_velocidade,50, 190, 2);
+	
+	font_draw_text(&calibri_36, "Max:", 160, 230, 1);
+	font_draw_text(&calibri_36, string_velocidade_maxima,250, 230, 2);
+	
 	font_draw_text(&arial_72, string_distancia,50, 60, 2);
+}
+
+void idle_mode(){
+	
 }
 
 void RTT_Handler(void)
 {
-
+	if(pulsos == idle_lastPulse){
+		idle_count +=1;
+		if(idle_count == 20){
+			idle_mode();
+		}
+	}else{
+		idle_count = 0;
+	}
 	uint32_t ul_status;
 	
 		/* Get RTT status */
@@ -162,20 +183,18 @@ void RTT_Handler(void)
 			f_rtt_alarme = true;                  // flag RTT alarme
 			
 			
-			
 			//contador para atualizar a velocidade e distancia a cada 4 segundos
 			if(count_velocidade_att == 0){
 				print_dist_vel();
 				
 			}
+			
 			if(!pause_flag){
 				count_velocidade_att +=1;
 			
 				if(count_velocidade_att ==4){
 					count_velocidade_att = 0;
 				}		
-			
-			
 			
 				increment_time();
 			}
@@ -271,6 +290,7 @@ void configure_lcd(void){
 	/* Initialize LCD */
 	ili9488_init(&g_ili9488_display_opt);
 	ili9488_draw_filled_rectangle(0, 0, ILI9488_LCD_WIDTH-1, ILI9488_LCD_HEIGHT-1);
+
 	
 }
 
@@ -359,6 +379,10 @@ int main(void) {
 			
 				//para km/h
 				velocidade = velocidade * 3.6;
+				
+				if(velocidade > velocidade_maxima){
+					velocidade_maxima = velocidade;
+				}
 				delta_pulsos = 0;
 			  }
 		  
